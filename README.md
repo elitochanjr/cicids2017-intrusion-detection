@@ -44,8 +44,8 @@ The pipeline covers the full ML lifecycle: problem framing, data preprocessing, 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/<your-username>/network-intrusion-detection.git
-cd network-intrusion-detection
+git clone https://github.com/elitochanjr/cicids2017-intrusion-detection.git
+cd cicids2017-intrusion-detection
 ```
 
 ### 2. Install dependencies
