@@ -83,14 +83,14 @@ notebooks/step3_eda_feature_engineering.ipynb → Preprocessing, EDA, features
 Binary classification (Benign vs. Attack) with multi-class extension across 14 attack subtypes. Primary metric: macro F1-Score. Target: Recall ≥ 0.95, FPR ≤ 0.05, AUC-ROC ≥ 0.98.
 
 ### Step 2: Data Collection
-CICIDS2017: 499,993 flow records, 78 numeric features from CICFlowMeter. Severe class imbalance (80.3% benign). Three data quality issues addressed: NaN rows, infinite rate values, zero-variance columns.
+CICIDS2017: ~500,000 flow records stratified-sampled to 467,589 after deduplication, 78 numeric features from CICFlowMeter. Severe class imbalance (80.3% benign). Three data quality issues addressed: NaN rows, infinite rate values, zero-variance columns.
 
 ### Step 3: Preprocessing & Feature Engineering
-- Duplicate removal, variance filtering, NaN row removal, infinite value capping
-- Log1p transformation on right-skewed features; RobustScaler
-- 6 domain-derived features: byte asymmetry, packet asymmetry, flag intensity, payload-to-header ratio, duration bins, protocol flags
-- 3-stage feature selection (variance → correlation filter → SHAP top-40)
-- PCA (95% variance retained) + t-SNE visualization
+- 467,589 rows after deduplication; 66 features after zero-variance drop; 29 features log-transformed
+- Infinite value capping at 99.9th percentile; RobustScaler for outlier-resistant scaling
+- 5 domain-derived features: byte asymmetry, packet asymmetry, flag intensity, payload-to-header ratio, duration bin
+- 3-stage feature selection: variance threshold → correlation filter → SHAP top-40 (71 → 51 → 40 features)
+- PCA: 95% variance retained in 3 components; t-SNE visualization confirms class separation
 
 ### Step 4: Model Implementation *(in progress)*
 Multiple supervised models (Logistic Regression, Random Forest, XGBoost, SVM) with hyperparameter tuning, cross-validation, and saved artifacts.
