@@ -1,0 +1,41 @@
+feature
+byte_asymmetry
+Destination Port
+Bwd Packet Length Std
+Bwd Packet Length Mean
+Packet Length Std
+Average Packet Size
+Total Length of Bwd Packets
+Avg Fwd Segment Size
+payload_header_ratio_fwd
+Packet Length Variance
+Init_Win_bytes_backward
+Bwd Packet Length Min
+Bwd Header Length
+Init_Win_bytes_forward
+PSH Flag Count
+Fwd Packet Length Max
+Total Backward Packets
+pkt_asymmetry
+Bwd Packets/s
+Fwd Header Length
+Min Packet Length
+Flow Bytes/s
+Flow IAT Mean
+Total Fwd Packets
+Flow IAT Std
+ACK Flag Count
+Fwd IAT Mean
+Fwd IAT Max
+Flow Duration
+Fwd IAT Std
+Fwd Packets/s
+min_seg_size_forward
+Fwd Packet Length Std
+URG Flag Count
+Flow Packets/s
+Bwd IAT Total
+act_data_pkt_fwd
+Flow IAT Min
+duration_bin
+Fwd IAT Min

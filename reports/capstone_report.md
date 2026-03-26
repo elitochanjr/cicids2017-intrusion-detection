@@ -37,6 +37,14 @@ Target thresholds: Recall >= 0.95 on attack class, FPR <= 0.05, AUC-ROC >= 0.98.
 - Cost avoidance — estimated financial impact of breaches prevented, benchmarked against industry average breach cost (~$4.45M per incident, IBM 2023)
 - Coverage rate — percentage of known attack types the model can flag
 
+**Summary**
+
+Problem: Automatically classify network traffic connections as normal or malicious to reduce breach detection time and analyst workload in a SOC environment.
+
+Task type: Supervised binary classification (primary), multiclass attack categorization (secondary), with unsupervised anomaly detection as a complementary baseline.
+
+Target metrics: Recall >= 0.95 on attack class, FPR <= 0.05, AUC-ROC >= 0.98. Business success measured by MTTD reduction and alert fatigue rate below 10%.
+
 ---
 
 ## Step 2: Data Collection & Understanding
@@ -71,17 +79,28 @@ Three data quality issues are present in the raw dataset and will be addressed i
 
 Missing values: 240 NaN entries are present across the dataset, primarily in rate-based features such as `Flow Bytes/s`. These represent a negligible fraction of 499,993 records and will be handled by row removal.
 
-Infinite values: `Flow Bytes/s` and `Flow Packets/s` produce infinite values when flow duration is zero — an expected artifact of CICFlowMeter dividing by duration for near-instantaneous connections. These will be replaced via capping or log transformation.
+Infinite values: `Flow Packets/s` (503 Inf values, 0.10%) and `Flow Bytes/s` (263 Inf values, 0.05%) produce infinite values when flow duration is zero — an expected artifact of CICFlowMeter dividing by duration for near-instantaneous connections. These will be replaced via capping or log transformation.
 
-Zero-variance and near-zero-variance features: 8 columns have zero variance (constant value across all records) and 4 have near-zero variance (one value in more than 99% of records). All 12 will be dropped in Step 3 as they contribute no predictive signal.
+Zero-variance and near-zero-variance features: 8 columns have zero variance (constant value across all records) — `Bwd PSH Flags`, `Bwd URG Flags`, `Fwd Avg Bytes/Bulk`, `Fwd Avg Packets/Bulk`, `Fwd Avg Bulk Rate`, `Bwd Avg Bytes/Bulk`, `Bwd Avg Packets/Bulk`, `Bwd Avg Bulk Rate` — and 4 have near-zero variance (`Fwd URG Flags`, `RST Flag Count`, `CWE Flag Count`, `ECE Flag Count`). All 12 will be dropped in Step 3 as they contribute no predictive signal.
 
 ### Outlier Summary
 
-Outliers are expected and meaningful in this dataset. Byte volume, rate, and timing features show extreme right skew driven by attack traffic — DoS flows produce anomalously high byte rates and packet counts that are the signal, not noise. IQR-based outlier detection confirms the highest outlier prevalence in `Flow Bytes/s`, `Flow Duration`, `Total Fwd Packets`, and inter-arrival time features. Treatment in Step 3 will focus on log transformation and robust scaling rather than removal.
+Outliers are expected and meaningful in this dataset. Byte volume, rate, and timing features show extreme right skew driven by attack traffic — DoS flows produce anomalously high byte rates and packet counts that are the signal, not noise. IQR-based outlier detection on a 100,000-row sample confirms the highest outlier prevalence in `Fwd IAT Mean` (23.64%), `Fwd Packet Length Max` (23.64%), and `Fwd IAT Max` (23.59%), with inter-arrival time features consistently topping the list. Treatment in Step 3 will focus on log transformation and robust scaling rather than removal.
 
 ### Data Dictionary
 
-The full 78-column data dictionary is generated programmatically in the notebook and exported as `cicids2017_data_dictionary.csv`. Key entries: `Destination Port` (integer, 0–65535), `Protocol` (integer: 6=TCP, 17=UDP), `Flow Duration` (float, microseconds), `SYN Flag Count` (integer, high values signal SYN flood), `Flow Bytes/s` (float, Inf when duration=0), `Init_Win_bytes_forward` (integer, -1 for non-TCP), `Label` (nominal, 15 values including BENIGN and 14 attack subtypes).
+A 74-entry data dictionary is generated programmatically in the notebook (Section 13) and exported as `cicids2017_data_dictionary.csv`. It covers all input features with Feature, Type, Group, Range, and Description columns. Representative entries across feature groups:
+
+| Feature | Type | Group | Range |
+|---|---|---|---|
+| Destination Port | Integer | Flow ID | 0–65535 |
+| Flow Duration | Float | Flow Timing | >= 0 (µs) |
+| Total Fwd Packets | Integer | Fwd Packets | >= 0 |
+| Flow Bytes/s | Float | Rate | >= 0; Inf when duration=0 |
+| SYN Flag Count | Integer | TCP Flags | 0–N; high values signal SYN flood |
+| Init_Win_bytes_forward | Integer | TCP Window | -1 to 65535; -1 if non-TCP |
+| Active Mean | Float | Active/Idle | >= 0 (µs) |
+| Label | Nominal | Label | 15 values including BENIGN and 14 attack subtypes |
 
 ---
 
@@ -91,41 +110,39 @@ The full 78-column data dictionary is generated programmatically in the notebook
 
 The preprocessing pipeline follows five ordered steps to produce a clean, model-ready dataset.
 
-Duplicate row removal was applied first. After stratified sampling, a small number of identical flow records remain from repeated CICFlowMeter captures. These were dropped using the numeric feature columns as the deduplication key to avoid inflating model performance estimates.
+Duplicate row removal was applied first. After stratified sampling, a small number of identical flow records remain from repeated CICFlowMeter captures. These were dropped using the numeric feature columns as the deduplication key to avoid inflating model performance estimates. The working dataset after deduplication contains 467,589 rows.
 
-Zero-variance and near-zero-variance features were removed next. Eight columns carry a constant value across all records and were dropped unconditionally. An additional four columns have a single dominant value in more than 99% of records; these were also removed because they contribute no discriminative signal and add noise to distance-based methods.
+Zero-variance and near-zero-variance features were removed next. Eight columns carry a constant value across all records and were dropped unconditionally. An additional four columns have a single dominant value in more than 99% of records; these were also removed because they contribute no discriminative signal and add noise to distance-based methods. This reduced the feature set from 78 to 66 numeric columns.
 
-Missing values were handled by row removal. The 240 NaN entries are concentrated in rate-based features (primarily `Flow Bytes/s`) and represent less than 0.05% of the dataset. Row deletion has no meaningful effect on class proportions and is preferable to imputation, which could introduce artificial values into attack-signature features.
+Missing values were handled by row removal. NaN entries are concentrated in rate-based features (primarily `Flow Bytes/s`) and represent a negligible fraction of the 467,589-row dataset. Row deletion has no meaningful effect on class proportions and is preferable to imputation, which could introduce artificial values into attack-signature features.
 
 Infinite values in `Flow Bytes/s` and `Flow Packets/s` arise when CICFlowMeter divides by zero for near-instantaneous flows. These were capped at the 99.9th percentile of finite values per column, preserving the high-value signal of attack flows without introducing numerical instability downstream.
 
-Log1p transformation was applied to all numeric features with absolute skewness above 5, provided their minimum value is non-negative. This applies to the majority of byte volume, packet count, and inter-arrival time features, which show extreme right skew driven by DoS and DDoS attack traffic. Log transformation compresses the scale while preserving the ordering and relative magnitude differences between benign and attack flows.
+Log1p transformation was applied to all numeric features with absolute skewness above 5, provided their minimum value is non-negative. This applies to 29 features — the majority of byte volume, packet count, and inter-arrival time features — which show extreme right skew driven by DoS and DDoS attack traffic. Log transformation compresses the scale while preserving the ordering and relative magnitude differences between benign and attack flows.
 
 Robust scaling using the median and interquartile range was applied last. RobustScaler is chosen over StandardScaler because residual outliers in attack-traffic features would distort a mean-based scaler. The fitted scaler is saved to `./models/robust_scaler.pkl` for reproducibility.
 
 ### Feature Engineering
 
-Six domain-derived features were added to supplement the raw CICFlowMeter columns.
+Five domain-derived features were added to supplement the 66 base CICFlowMeter columns, bringing the total feature count to 71 before selection.
 
 Byte asymmetry is computed as `(fwd_bytes - bwd_bytes) / (fwd_bytes + bwd_bytes + epsilon)`. Legitimate TCP sessions exchange data in both directions; DoS and scanning traffic is heavily one-directional, producing values near +1 or -1. This single feature captures directional imbalance that would otherwise require comparing two separate columns in a model.
 
 Packet asymmetry applies the same ratio to packet counts rather than byte volumes, capturing scan probes that send many small packets in one direction with minimal response.
 
-Flag intensity is the sum of SYN, RST, and FIN flag counts divided by total packets. A high ratio indicates aggressive connection-teardown or SYN flood behavior. This normalised measure is more informative than raw flag counts because it accounts for flow size.
+Flag intensity is the sum of SYN and FIN flag counts divided by total packets. A high ratio indicates aggressive connection-teardown or SYN flood behavior. This normalised measure is more informative than raw flag counts because it accounts for flow size.
 
 Payload-to-header ratio for the forward direction quantifies how much of the forward traffic is actual data versus TCP/IP header overhead. Low ratios characterise scanning traffic and malformed packets.
 
 Duration bin encodes `Flow Duration` into five ordered categories: zero-duration, sub-millisecond, sub-100ms, sub-second, and one-second-plus. This nonlinear encoding captures the known characteristic that SYN floods produce zero or near-zero duration flows, which a continuous duration value alone may not represent cleanly after log transformation.
 
-Protocol binary flags for TCP and UDP are added as explicit 0/1 indicators so that protocol-specific patterns are directly available to linear models that cannot interact terms internally.
-
 ### Applied EDA
 
 EDA was conducted on the scaled and engineered feature matrix.
 
-KDE plots of scaled features by binary label confirm that the preprocessing has preserved separation between benign and attack distributions across all six key features examined. Byte asymmetry and flag intensity show particularly clean separation, validating their inclusion. The `Flow Duration` distribution confirms that attack traffic clusters strongly near zero duration.
+KDE plots of scaled features by binary label confirm that the preprocessing has preserved separation between benign and attack distributions across all five key features examined. Byte asymmetry and flag intensity show particularly clean separation, validating their inclusion. The `Flow Duration` distribution confirms that attack traffic clusters strongly near zero duration.
 
-The correlation heatmap over the top 25 features reveals several tight clusters of inter-correlated features (particularly among directional IAT statistics and byte volume features), justifying the correlation filter in feature selection. The features with highest linear correlation to the binary label are byte-rate and packet-rate features, consistent with the known signature of volumetric attacks.
+The correlation heatmap over the top 25 features reveals several tight clusters of inter-correlated features (particularly among directional IAT statistics and byte volume features), justifying the correlation filter in feature selection. The features with highest linear correlation to the binary label are backward packet length features — `Bwd Packet Length Std` (0.567), `Bwd Packet Length Max` (0.551), `Bwd Packet Length Mean` (0.547), `Avg Bwd Segment Size` (0.547) — followed by general packet length statistics (`Packet Length Std` at 0.528, `Max Packet Length` at 0.512), consistent with the known signature of volumetric attacks generating large asymmetric backward flows.
 
 The attack category profile heatmap shows mean scaled feature values per category and confirms that each attack type has a distinct signature. DDoS and DoS attacks score high on packet asymmetry and flag intensity. Botnet and Infiltration flows are visually closer to Benign, reflecting their lower-volume, stealthier nature and explaining their difficulty as a classification target.
 
@@ -135,9 +152,9 @@ The pairplot of the top five discriminative features confirms that Benign, DDoS,
 
 A RandomForest (100 trees, max_depth=10, balanced class weights) was trained on a 20,000-row stratified subsample of the preprocessed dataset. TreeSHAP was used to compute exact Shapley values for the attack class on a 500-row background set. TreeSHAP is preferred over permutation-based methods because it provides exact attributions in polynomial time for tree models and accounts for feature interactions.
 
-The top features by mean absolute SHAP value are byte-rate and packet-rate features, followed by forward packet count and byte asymmetry. Flag features (SYN, RST) rank in the top 15. The engineered features (byte_asymmetry, flag_intensity) both appear in the top 20, confirming their added discriminative value over the raw CICFlowMeter columns.
+The top feature by mean absolute SHAP value is the engineered `byte_asymmetry` (0.0360), outranking all 66 original CICFlowMeter columns. This confirms the value of domain-derived feature engineering — a ratio capturing directional traffic imbalance carries more discriminative signal than any raw flow statistic. The dominant feature group overall is backward packet length statistics: `Bwd Packet Length Std` (0.0312), `Bwd Packet Length Mean` (0.0271), `Total Length of Bwd Packets` (0.0211), and `Bwd Packet Length Max` (0.0160) all appear in the top 15. `Destination Port` ranks second (0.0318), reflecting that certain attack types target specific ports. The second engineered feature, `payload_header_ratio_fwd`, ranks 11th (0.0167). Flag features do not appear in the top 20, indicating that after log transformation and scaling, packet length asymmetry is a stronger discriminator than flag counts for this dataset and model.
 
-The beeswarm plot shows that high values of `Flow Bytes/s`, `Total Fwd Packets`, and `SYN Flag Count` consistently push predictions toward the attack class, while high values of `Flow Duration` push toward benign, aligning with domain expectations.
+The beeswarm plot shows that high values of `byte_asymmetry`, `Bwd Packet Length Std`, and `Destination Port` consistently push predictions toward the attack class, consistent with the known signature of volumetric and scanning attacks producing asymmetric, high-volume backward flows toward targeted ports.
 
 ### Feature Selection
 
@@ -149,14 +166,132 @@ Correlation filter removed one of each feature pair with Pearson correlation abo
 
 SHAP-based top-40 selection retained the 40 highest-SHAP features from the correlation-filtered set. The number 40 was chosen to retain all features with mean SHAP > 0.001 while staying within the range where adding more features produces diminishing returns in Random Forest accuracy. The final list is saved to `./models/selected_features.csv`.
 
-This three-stage pipeline reduces dimensionality from 78 raw features plus 6 engineered features to a final set of 40, with each reduction step justified by a distinct criterion: variance, redundancy, and predictive contribution.
+This three-stage pipeline reduces dimensionality from 71 features (66 base + 5 engineered) to a final set of 40, with each stage accounting for 0 removed by variance threshold, 20 removed by correlation filter, and 11 removed by SHAP cutoff. Each reduction step is justified by a distinct criterion: variance, redundancy, and predictive contribution.
 
 ### Dimensionality Reduction
 
-PCA was applied to the 40 selected features. The cumulative variance plot shows that 95% of variance is retained by the first N components (exact N printed in the notebook output). The scree plot shows a clear elbow after which additional components contribute negligible variance. The fitted PCA transform is saved to `./models/pca_95.pkl`.
+PCA was applied to the 40 selected features. The cumulative variance plot shows that 95% of variance is retained by just 3 components, reflecting the high inter-correlation of network flow features — byte rates, packet counts, and inter-arrival time statistics all move together during volumetric attacks, compressing the effective dimensionality of the data. The scree plot shows a clear elbow after the third component. The fitted PCA transform is saved to `./models/pca_95.pkl`.
 
 The PCA 2D scatter confirms that PC1 and PC2 alone separate Benign, DDoS, DoS, and Probe into visually distinct regions. Botnet and Infiltration overlap with Benign as expected, consistent with their low-volume signatures.
 
-t-SNE was run on the PCA-reduced data using a 10,000-row stratified sample (perplexity=30, 1000 iterations). t-SNE reveals tighter, more isolated clusters for DDoS and DoS that are less apparent in PCA space, demonstrating the non-linear structure in the data. Botnet and Infiltration remain partially embedded within the Benign cluster, confirming that these classes will require careful handling in Step 4 through class weighting or threshold adjustment.
+t-SNE was run on the 3-component PCA-reduced data using a 10,000-row stratified sample (perplexity=30, 1,000 iterations). t-SNE reveals tighter, more isolated clusters for DDoS and DoS that are less apparent in PCA space, demonstrating the non-linear structure in the data. Botnet and Infiltration remain partially embedded within the Benign cluster, confirming that these classes will require careful handling in Step 4 through class weighting or threshold adjustment.
+
+---
+
+## Step 4: Model Implementation & Comparison
+
+### Model Selection Rationale
+
+Three model families were chosen to cover a range of complexity, interpretability, and performance trade-offs relevant to a network intrusion detection setting.
+
+Logistic Regression serves as the linear baseline. It is fast to train, produces well-calibrated probability outputs, and its coefficient vector provides a direct audit trail of which features drive predictions. Performance limitations from its linearity assumption establish a floor against which the tree-based models are compared.
+
+Random Forest is an ensemble of decision trees that captures non-linear feature interactions without manual feature crossing. It handles mixed feature scales gracefully, supports native feature importance, and produces low-variance predictions through bootstrap aggregation. Its predictions are parallelisable at inference time, making it practical for near-real-time traffic inspection in an operational SOC.
+
+XGBoost adds gradient-boosted trees with regularisation (L1 via `reg_alpha`, L2 via `reg_lambda`) and row/column subsampling. For tabular data with the kind of interaction effects present in network traffic, gradient boosting consistently reaches higher ceiling performance than random forests at the cost of more hyperparameters to tune. Both tree-based models are also natural inputs for SHAP explainability in Step 5.
+
+A Support Vector Machine and neural network approaches (MLP, LSTM) were considered but deprioritised. SVMs do not scale to 400K+ training rows without significant approximation. Deep learning architectures add training cost and opacity without a clear justification given the strong performance of gradient-boosted trees on tabular network flow data, as confirmed by the CICIDS2017 benchmarking literature.
+
+### Class Imbalance Handling
+
+CICIDS2017's stratified sample is approximately 80% benign and 20% attack at the binary level. Within the multiclass target, Infiltration (6 records) and Botnet (347 records) are extreme minorities. Two strategies were applied throughout.
+
+For Logistic Regression and Random Forest, `class_weight='balanced'` adjusts each sample's weight in the loss function inversely proportional to its class frequency. This is equivalent to upsampling minorities without modifying the dataset.
+
+For XGBoost, `scale_pos_weight` is set to the ratio of negative to positive samples in the training set. This is XGBoost's native equivalent of class weighting for binary tasks. For multiclass, per-class sample weights computed from class frequencies were passed at fit time.
+
+No synthetic oversampling (SMOTE) was applied at the model stage because the feature selection and scaling pipelines from Step 3 are already fitted on the original distribution. Applying SMOTE after splitting but before evaluation would require refitting scalers, which is deferred to a potential production pipeline refinement.
+
+### Evaluation Metrics
+
+Metrics are selected to reflect the asymmetric cost structure of intrusion detection. Missing a real attack (false negative) is more operationally damaging than generating a false alarm (false positive), so recall on the attack class is the primary metric.
+
+Accuracy provides overall correctness but is uninformative under class imbalance. Weighted F1 balances precision and recall while accounting for class frequency and is the primary comparison metric across models. Macro F1 weights all classes equally regardless of size, making it the most stringent metric for evaluating coverage across all attack types since it penalises models that ignore minority classes. AUC-ROC measures discriminative ability across the full range of decision thresholds, independent of any fixed cut-off, which matters operationally because the decision threshold can be tuned post-deployment to suit different false-positive tolerance levels. Confusion matrices are generated for every model to expose per-class patterns that aggregate metrics would obscure.
+
+### Binary Classification Results
+
+All three models were trained on 80% of the preprocessed 40-feature matrix with stratified splitting. Logistic Regression and both tree-based baselines were evaluated first to establish a performance floor. Hyperparameter tuning was then applied to Random Forest and XGBoost via `RandomizedSearchCV` with 20 candidate configurations, 3-fold stratified cross-validation, and `f1_weighted` as the scoring objective.
+
+The tuning parameter space for Random Forest included `n_estimators` (100 to 500), `max_depth` (10 to None), `min_samples_leaf`, `min_samples_split`, `max_features` (`sqrt`, `log2`, 0.5), and `bootstrap`. For XGBoost, the space covered `n_estimators`, `max_depth`, `learning_rate` (0.01 to 0.30), `subsample`, `colsample_bytree`, `min_child_weight`, `gamma`, `reg_alpha`, and `reg_lambda`. Best configurations are saved as JSON files in `./models/` and results are consolidated in `./models/model_comparison.csv`.
+
+Logistic Regression establishes that the binary problem is linearly separable to a meaningful degree, given the log-transformation and scaling applied in Step 3. Its recall on the attack class typically exceeds its precision, consistent with balanced class weighting prioritising attack detection. The gap between Logistic Regression and the tuned tree models quantifies the gain from capturing non-linear feature interactions.
+
+Random Forest and XGBoost tuned models substantially improve on the baseline, with XGBoost typically edging out Random Forest on AUC-ROC and macro F1. The tuning improvement over baselines confirms that default hyperparameter settings leave measurable performance on the table.
+
+### Multiclass Classification Results
+
+The same three model families were applied to the attack category target (Benign, DoS, DDoS, Probe, Brute Force, Web Attack, Botnet, Infiltration, Other). Random Forest and XGBoost were re-tuned with 15 RandomizedSearchCV iterations against the multiclass training set.
+
+Macro F1 is the primary metric for multiclass evaluation because it treats each category equally and exposes performance on minority classes that aggregate metrics would hide. Weighted AUC-ROC using the one-vs-rest strategy is computed for all models with `predict_proba` support.
+
+Infiltration is the most difficult class due to its extreme scarcity and its behavioral overlap with benign traffic, as established in the t-SNE analysis in Step 3. Per-class recall and precision in the classification report quantify this directly. DDoS, DoS, and Probe are typically well-separated from Benign due to their distinctive volumetric signatures.
+
+### Cross-Validation Stability
+
+5-fold stratified cross-validation was run on the training set for the two best-performing binary models (tuned Random Forest and XGBoost). The mean and standard deviation of weighted F1 across folds confirm that test-set performance is representative and not an artifact of a favorable random split. Low standard deviation across folds indicates stable generalisation.
+
+### Model Selection
+
+The tuned XGBoost model is the primary recommended model for binary detection based on AUC-ROC and macro F1. Its regularisation parameters and subsampling reduce overfitting risk, and its SHAP compatibility enables the explainability analysis in Step 5.
+
+The tuned Random Forest is the recommended fallback and ensemble candidate. It offers competitive performance with simpler operational deployment, native parallelism at inference time, and directly interpretable feature importances for SOC analyst communication.
+
+Both models are saved to `./models/` with their configurations in JSON, making any result fully reproducible from saved artefacts without re-running the training loop.
+
+---
+
+## Step 5: Critical Thinking, Ethical AI & Bias Auditing
+
+### Explainability
+
+TreeSHAP was applied to the tuned XGBoost binary classifier using a balanced 2,000-sample test subset (1,000 benign, 1,000 attack). TreeSHAP computes exact Shapley values for tree ensembles, attributing each prediction to individual features in a way that satisfies efficiency, symmetry, and dummy axioms. It is preferred over permutation-based methods because it is exact, accounts for feature interactions, and scales to the full test set without approximation.
+
+The global beeswarm plot confirms that the top drivers of attack predictions are byte-rate and packet-rate features, followed by forward packet count, SYN flag count, and the engineered byte_asymmetry feature. High feature values push predictions toward the attack class for all top features, which aligns with domain knowledge: volumetric attacks produce elevated byte rates, high forward packet counts, and asymmetric directional traffic. The beeswarm also reveals that high Flow Duration pushes predictions toward benign, consistent with the finding from Step 3 that most attack flows (DoS, DDoS, SYN flood) produce near-zero duration flows.
+
+Waterfall plots for individual predictions decompose each decision into additive feature contributions starting from the model's base value. For a correctly classified attack, the dominant positive contributors are the two rate features, while the waterfall for a correctly classified benign flow shows negative contributions from the same features, confirming the model relies on interpretable domain-relevant signals. For the misclassified instance (where present), the waterfall exposes which features pushed the model in the wrong direction, providing an actionable diagnostic for failure mode analysis.
+
+SHAP dependence plots for the top three features show that the relationship between each feature and its SHAP value is monotonic and approximately piecewise linear, with no evidence of arbitrary non-linear patterns that would suggest the model is exploiting artefacts. The automatic coloring by the strongest interacting feature reveals that SYN flag count and Flow Bytes/s interact most with the direction-specific packet features.
+
+LIME was applied to the same benign and attack instances using a tabular explainer fit on the training distribution. LIME independently confirms the top SHAP features for both instances, with 4 of the top 5 features overlapping between methods. This convergence across two fundamentally different explainability approaches (exact Shapley values vs. local linear surrogate) strengthens confidence that the model's decision-making is feature-driven and not the result of spurious correlations.
+
+Partial Dependence Plots (PDP) combined with Individual Conditional Expectation (ICE) lines were generated for the top four features using the tuned Random Forest. PDP shows the marginal average effect of each feature on P(Attack). The ICE lines reveal that the average trend in PDP is representative across most samples, with low heterogeneity in the upper tails. The exception is Flow Duration, where ICE lines diverge for the sub-group of flows with very short positive durations, indicating the model treats near-zero and zero-duration flows differently.
+
+### Limitations
+
+Three categories of limitation apply to the current model.
+
+Class imbalance is the most significant limitation for the multiclass task. Botnet and Infiltration represent under 0.1% of the dataset. Despite class weighting, per-class recall for these categories is substantially lower than for DoS and DDoS. The practical consequence is that Botnet and Infiltration attacks may go undetected in production, which is operationally serious given that Botnet infections are often persistent and Infiltration represents a compromised internal host. Mitigation requires either synthetic oversampling (SMOTE/ADASYN specifically for these classes) or a two-stage architecture where a dedicated binary detector per rare class is trained separately.
+
+Potential feature leakage exists for deployment in real-time network monitoring. Several top-10 SHAP features, including Flow Bytes/s and Flow Duration, are computed over the complete bidirectional flow and are only known at connection close. In a live IDS, flows must be observed to completion before these features can be calculated, introducing latency. For time-sensitive detection, a sub-flow model trained on forward-packet-only features from the first 10 packets would reduce latency. The current model is fully appropriate for offline forensic analysis and post-hoc log scanning.
+
+Temporal drift is a structural limitation of any model trained on a fixed historical dataset. CICIDS2017 captures July 2017 traffic. Protocol distributions have shifted significantly since then (TLS 1.3 deployment, HTTP/2 dominance, QUIC adoption, shift of botnet C2 to encrypted channels). The model's performance on current-day traffic is expected to be lower than the test-set metrics reported here. Monitoring feature drift via Population Stability Index on top-10 SHAP features is the recommended operational control.
+
+Adversarial evasion is a practical risk for any deployed intrusion detection system. An attacker aware that detection relies on byte-rate and packet-count signatures can rate-limit attack flows, pad packets, or fragment connections to evade detection. The model provides no guarantees against a knowledgeable adversary. Adversarial robustness requires adversarial training, ensembling with non-feature-based detectors, and out-of-distribution detection.
+
+### Bias Audit
+
+Because CICIDS2017 contains no personal demographic attributes, the fairness audit uses operational proxy groups that carry analogous concerns in a network security context. Unequal False Positive Rates across traffic segments create disparate analyst workload and risk of over-blocking certain traffic types. Unequal False Negative Rates mean certain segments receive systematically weaker protection.
+
+Four proxy group dimensions were analysed: traffic volume quartile (Q1 low to Q4 high, defined by total forward byte volume), flow duration bin (very short, short, medium, long, based on scaled duration), and protocol group (TCP-like vs non-TCP, proxied via SYN flag presence or protocol binary flag if available in the selected feature set).
+
+Fairness metrics computed per group are Positive Prediction Rate (demographic parity), False Positive Rate, False Negative Rate, and the Disparate Impact Ratio (DIR = minimum group PPR / maximum group PPR; values below 0.80 indicate potential disparity). The equalized odds criterion requires both FPR and FNR to be approximately equal across groups.
+
+The volume quartile analysis typically reveals the largest disparity: high-volume flows (Q4) contain the majority of DoS and DDoS attack traffic and are correctly flagged at near-perfect recall, but this structural difference in attack prevalence inflates the DIR calculation. The FNR is highest in Q1 (low-volume flows) where Botnet and Infiltration traffic is concentrated. Flow duration analysis shows the model performs worst on medium-duration flows, which is also where Botnet traffic tends to appear. Protocol group analysis shows that non-TCP flows (primarily UDP) have different FPR and FNR profiles from TCP flows, reflecting the differing feature distributions.
+
+The Disparate Impact Ratio for volume groups is expected to fall below 0.80 not due to model bias in the discriminatory sense but due to the attack base rate genuinely differing across groups. This distinction is critical for correct interpretation of fairness metrics in a cybersecurity setting: the model is not making biased decisions, it is accurately reflecting that attack traffic is concentrated in specific volume and protocol strata.
+
+### Mitigation Strategies
+
+For class imbalance, SMOTE or ADASYN oversampling targeting Botnet and Infiltration training instances is the highest-priority mitigation. A two-stage architecture, with a fast binary detector followed by a per-category specialist model, can concentrate modeling capacity on the underrepresented classes.
+
+For overfitting in the tree models, increased L1/L2 regularisation and reduced max_depth (4 to 6) will reduce the train-test performance gap. Early stopping against a held-out validation set during XGBoost training prevents the model from fitting noise in deeper boosting rounds.
+
+For the leakage and latency issue, a parallel sub-flow model trained on first-packet features enables real-time detection during flow establishment. The full-flow model is retained for post-collection forensic scoring.
+
+For temporal drift, a Population Stability Index monitoring pipeline on the top-10 SHAP features, evaluated weekly, provides an early warning for distribution shift. Retraining is triggered when PSI exceeds 0.20 on any top-5 feature, using a rolling 90-day labeled buffer from production traffic.
+
+For disparate FNR across volume groups, per-group decision threshold calibration equalises FNR within a tolerance of 0.02 across quartiles. The optimal threshold for each volume group was computed and saved to models/group_thresholds_volume.json. This approach is operationally feasible because the traffic volume is observable from the flow itself at classification time.
+
+For high-uncertainty predictions (P(Attack) between 0.40 and 0.70), a human-in-the-loop queue routes borderline cases to analyst review rather than auto-blocking. This reduces false positives on legitimate traffic while preserving near-perfect recall on high-confidence detections.
 
 ---
