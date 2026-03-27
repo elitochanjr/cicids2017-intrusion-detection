@@ -26,15 +26,6 @@ Trained model files and processed data arrays are not tracked in this repository
 | `pca_95.pkl` | Fitted PCA (95% variance, 3 components) from Step 3 |
 | `y_category_labels.pkl` | Attack category label mapping for multiclass target |
 
-### Best Hyperparameter Configs (.json) — Google Drive only
-
-| File | Description |
-|---|---|
-| `rf_binary_best_params.json` | Best RF params from RandomizedSearchCV (binary) |
-| `rf_multiclass_best_params.json` | Best RF params from RandomizedSearchCV (multiclass) |
-| `xgb_binary_best_params.json` | Best XGBoost params (binary) |
-| `xgb_multiclass_best_params.json` | Best XGBoost params (multiclass) |
-
 ### Processed Data Arrays (.npy) — Google Drive only
 
 | File | Description |
