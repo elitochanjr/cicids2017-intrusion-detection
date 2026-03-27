@@ -71,7 +71,7 @@ Flow timing features capture connection duration and inter-arrival time statisti
 
 The working dataset contains 8 attack categories across 15 distinct label values. Class imbalance is severe: Benign traffic accounts for 401,501 records (80.30%). Among attack types, DoS variants are the largest group at 44,627 records (8.93%), followed by Probe at 28,072 (5.61%) and DDoS at 22,613 (4.52%). Brute Force attacks total 2,443 records (0.49%). Web Attacks (Brute Force, XSS, SQL Injection) appear as 384 records (0.08%) in the "Other" category due to a label encoding mismatch with the em-dash character in this dataset mirror, which will be resolved in preprocessing. Botnet contains 347 records (0.07%) and Infiltration only 6 records (0.00%).
 
-The extreme underrepresentation of Botnet, Web Attack, and especially Infiltration is a known characteristic of CICIDS2017 and will be addressed in Step 3 through stratified sampling, class weighting, and SMOTE for minority classes.
+The extreme underrepresentation of Botnet, Web Attack, and especially Infiltration is a known characteristic of CICIDS2017. Class imbalance is addressed through class weighting in all models (Step 4). SMOTE was evaluated but deferred: applying synthetic oversampling after the Step 3 scaling pipeline would require refitting transformers on augmented data, which is reserved for a production pipeline refinement.
 
 ### Missing Values & Data Quality Issues
 
@@ -210,21 +210,35 @@ Accuracy provides overall correctness but is uninformative under class imbalance
 
 ### Binary Classification Results
 
-All three models were trained on 80% of the preprocessed 40-feature matrix with stratified splitting. Logistic Regression and both tree-based baselines were evaluated first to establish a performance floor. Hyperparameter tuning was then applied to Random Forest and XGBoost via `RandomizedSearchCV` with 20 candidate configurations, 3-fold stratified cross-validation, and `f1_weighted` as the scoring objective.
+All three models were trained on 80% of the preprocessed 40-feature matrix with stratified splitting. Logistic Regression and both tree-based baselines were evaluated first to establish a performance floor. Hyperparameter tuning was then applied to Random Forest and XGBoost via `RandomizedSearchCV` with 10 candidate configurations on a 30% stratified subsample, 3-fold stratified cross-validation, and `f1_weighted` as the scoring objective. Best-parameter models were refitted on the full training set. Best configurations are saved as JSON files in `./models/` and results are consolidated in `./models/model_comparison.csv`.
 
-The tuning parameter space for Random Forest included `n_estimators` (100 to 500), `max_depth` (10 to None), `min_samples_leaf`, `min_samples_split`, `max_features` (`sqrt`, `log2`, 0.5), and `bootstrap`. For XGBoost, the space covered `n_estimators`, `max_depth`, `learning_rate` (0.01 to 0.30), `subsample`, `colsample_bytree`, `min_child_weight`, `gamma`, `reg_alpha`, and `reg_lambda`. Best configurations are saved as JSON files in `./models/` and results are consolidated in `./models/model_comparison.csv`.
+| Model | Accuracy | Precision | Recall | F1 (weighted) | F1 (macro) | AUC-ROC |
+|---|---|---|---|---|---|---|
+| Logistic Regression | 0.8559 | 0.5658 | 0.8491 | 0.6791 | 0.7931 | 0.9271 |
+| RF Baseline | 0.9988 | 0.9954 | 0.9982 | 0.9968 | 0.9980 | 0.9999 |
+| RF Tuned | 0.9989 | 0.9957 | 0.9983 | 0.9970 | 0.9982 | 0.9999 |
+| XGBoost Baseline | 0.9990 | 0.9948 | 0.9995 | 0.9972 | 0.9983 | 1.0000 |
+| XGBoost Tuned | 0.9990 | 0.9951 | 0.9994 | 0.9972 | 0.9983 | 1.0000 |
 
-Logistic Regression establishes that the binary problem is linearly separable to a meaningful degree, given the log-transformation and scaling applied in Step 3. Its recall on the attack class typically exceeds its precision, consistent with balanced class weighting prioritising attack detection. The gap between Logistic Regression and the tuned tree models quantifies the gain from capturing non-linear feature interactions.
+Logistic Regression confirms the binary problem is linearly separable to a meaningful degree after the log-transformation and scaling applied in Step 3, achieving AUC-ROC of 0.9271. Its weighted F1 of 0.6791 and macro F1 of 0.7931 reflect the cost of linear decision boundaries on a dataset with non-linear attack signatures. Recall of 0.8491 exceeds precision of 0.5658, consistent with balanced class weighting prioritising attack detection over false positive control.
 
-Random Forest and XGBoost tuned models substantially improve on the baseline, with XGBoost typically edging out Random Forest on AUC-ROC and macro F1. The tuning improvement over baselines confirms that default hyperparameter settings leave measurable performance on the table.
+Both tree-based models at baseline already reach near-perfect performance, with RF Baseline hitting F1 (weighted) of 0.9968 and AUC-ROC of 0.9999. Tuning produces marginal but consistent gains: RF Tuned improves macro F1 from 0.9980 to 0.9982, and XGBoost Tuned maintains its AUC-ROC of 1.0000 while improving precision from 0.9948 to 0.9951. The narrow gap between baseline and tuned models indicates the feature engineering and preprocessing in Step 3 did most of the heavy lifting.
+
+XGBoost edges out Random Forest on recall (0.9994 vs 0.9983) and matches it on macro F1, confirming it as the stronger model for minimising missed attacks — the primary operational concern.
 
 ### Multiclass Classification Results
 
-The same three model families were applied to the attack category target (Benign, DoS, DDoS, Probe, Brute Force, Web Attack, Botnet, Infiltration, Other). Random Forest and XGBoost were re-tuned with 15 RandomizedSearchCV iterations against the multiclass training set.
+The same model families were applied to the attack category target. Random Forest and XGBoost were tuned with 10 RandomizedSearchCV iterations on the 30% subsample against the multiclass training set. Logistic Regression multiclass used `multi_class='multinomial'` with `lbfgs` solver.
 
-Macro F1 is the primary metric for multiclass evaluation because it treats each category equally and exposes performance on minority classes that aggregate metrics would hide. Weighted AUC-ROC using the one-vs-rest strategy is computed for all models with `predict_proba` support.
+| Model | Accuracy | Precision | Recall | F1 (weighted) | F1 (macro) | AUC-ROC |
+|---|---|---|---|---|---|---|
+| Logistic Regression | 0.2700 | 0.8334 | 0.2700 | 0.3550 | 0.1435 | N/A |
+| RF Tuned | 0.9979 | 0.9985 | 0.9979 | 0.9981 | 0.9332 | N/A |
+| XGBoost Tuned | 0.9991 | 0.9991 | 0.9991 | 0.9991 | 0.9667 | N/A |
 
-Infiltration is the most difficult class due to its extreme scarcity and its behavioral overlap with benign traffic, as established in the t-SNE analysis in Step 3. Per-class recall and precision in the classification report quantify this directly. DDoS, DoS, and Probe are typically well-separated from Benign due to their distinctive volumetric signatures.
+Logistic Regression collapses under the multiclass task, with accuracy of 0.2700 and macro F1 of 0.1435, confirming that linear boundaries cannot separate the nine attack categories. Its high precision of 0.8334 with very low recall indicates it predicts only the dominant classes confidently and abstains on most others.
+
+RF Tuned and XGBoost Tuned both perform strongly. XGBoost Tuned achieves the best results across all metrics: accuracy 0.9991, F1 (weighted) 0.9991, and macro F1 0.9667. The gap between weighted F1 (0.9991) and macro F1 (0.9667) reflects lower performance on minority classes — primarily Botnet and Infiltration — where class imbalance limits recall despite class weighting. RF Tuned macro F1 of 0.9332 shows a larger penalty on minority classes compared to XGBoost.
 
 ### Cross-Validation Stability
 
@@ -232,11 +246,11 @@ Infiltration is the most difficult class due to its extreme scarcity and its beh
 
 ### Model Selection
 
-The tuned XGBoost model is the primary recommended model for binary detection based on AUC-ROC and macro F1. Its regularisation parameters and subsampling reduce overfitting risk, and its SHAP compatibility enables the explainability analysis in Step 5.
+XGBoost Tuned is the primary recommended model for both binary and multiclass tasks. On binary detection it achieves AUC-ROC of 1.0000, recall of 0.9994, and macro F1 of 0.9983, meeting all target thresholds set in Step 1 (Recall >= 0.95, AUC-ROC >= 0.98, FPR <= 0.05). On multiclass it achieves macro F1 of 0.9667, the highest across all models. Its regularisation and subsampling parameters reduce overfitting risk, and its SHAP compatibility supports the explainability analysis in Step 5.
 
-The tuned Random Forest is the recommended fallback and ensemble candidate. It offers competitive performance with simpler operational deployment, native parallelism at inference time, and directly interpretable feature importances for SOC analyst communication.
+RF Tuned is the recommended fallback and ensemble candidate. It achieves near-identical binary performance (AUC-ROC 0.9999, macro F1 0.9982) with simpler operational deployment, native parallelism at inference time, and directly interpretable feature importances for SOC analyst communication.
 
-Both models are saved to `./models/` with their configurations in JSON, making any result fully reproducible from saved artefacts without re-running the training loop.
+Both models are saved to `./models/` with their configurations in JSON, making all results fully reproducible from saved artefacts without re-running the training loop.
 
 ---
 

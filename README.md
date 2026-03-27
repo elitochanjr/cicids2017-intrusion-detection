@@ -22,8 +22,8 @@ The pipeline covers the full ML lifecycle: problem framing, data preprocessing, 
 ├── notebooks/              # Jupyter notebooks (one per step)
 │   ├── step2_data_collection.ipynb
 │   ├── step3_eda_feature_engineering.ipynb
-│   ├── step4_model_implementation.ipynb     # coming in Step 4
-│   └── step5_bias_audit.ipynb               # coming in Step 5
+│   ├── step4_model_implementation.ipynb
+│   └── step5_bias_fairness_audit.ipynb
 ├── src/                    # Reusable Python modules
 │   ├── __init__.py
 │   └── preprocessing.py    # Shared preprocessing utilities
@@ -93,10 +93,20 @@ CICIDS2017: ~500,000 flow records stratified-sampled to 467,589 after deduplicat
 - PCA: 95% variance retained in 3 components; t-SNE visualization confirms class separation
 
 ### Step 4: Model Implementation *(in progress)*
-Multiple supervised models (Logistic Regression, Random Forest, XGBoost, SVM) with hyperparameter tuning, cross-validation, and saved artifacts.
+Multiple supervised models (Logistic Regression, Random Forest, XGBoost) with hyperparameter tuning via RandomizedSearchCV, cross-validation, and saved artifacts. SVM deprioritized due to scaling constraints at 400K+ rows.
 
 ### Step 5: Bias & Fairness Audit *(in progress)*
 SHAP/LIME/PDP explanations, imbalance and overfitting analysis, fairness evaluation across traffic subgroups.
+
+---
+
+## Model Artifacts
+
+Trained model files (`.pkl`) and processed data arrays (`.npy`) are not tracked in this repository due to file size. Download them from Google Drive:
+
+**[Google Drive — models/](https://drive.google.com/drive/folders/1m4KAoLV85kvqSxyrEXhf7xWcHiqNpf4G?usp=drive_link)**
+
+See `models/README.md` for a full description of every file.
 
 ---
 
@@ -115,9 +125,8 @@ SHAP/LIME/PDP explanations, imbalance and overfitting analysis, fairness evaluat
 
 - Python 3.10+
 - pandas, numpy, scikit-learn
-- imbalanced-learn (SMOTE)
 - shap, matplotlib, seaborn
-- xgboost, lightgbm
+- xgboost
 - joblib (model persistence)
 
 ---

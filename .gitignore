@@ -16,6 +16,7 @@ models/*.joblib
 models/*.h5
 models/*.pt
 models/*.bin
+models/*.npy
 
 # Keep directory structure
 !models/.gitkeep
