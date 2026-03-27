@@ -2,6 +2,7 @@
 
 **PGD AIML Capstone Project** | Cybersecurity Domain
 *Detecting anomalies in network traffic using the CICIDS2017 dataset*
+**Author:** Elito Chan Jr.
 
 ---
 
@@ -29,10 +30,14 @@ The pipeline covers the full ML lifecycle: problem framing, data preprocessing, 
 │   └── preprocessing.py    # Shared preprocessing utilities
 ├── data/                   # Data directory (files not tracked — see below)
 │   └── README.md
-├── models/                 # Saved model artifacts (not tracked in git)
+├── models/                 # Saved model artifacts (binaries not tracked in git)
+│   ├── model_comparison.csv
 │   └── .gitkeep
-├── reports/                # Written analysis and final report
-│   └── capstone_report.md
+├── reports/                # Final report and presentation decks
+│   ├── capstone_report.docx
+│   ├── capstone_report.pdf
+│   ├── technical_presentation.pptx
+│   └── business_presentation.pptx
 ├── requirements.txt
 └── .gitignore
 ```
@@ -71,8 +76,10 @@ unzip network-intrusion-dataset.zip -d data/raw/
 ### 4. Run the notebooks in order
 
 ```
-notebooks/step2_data_collection.ipynb       → Dataset overview & data dictionary
-notebooks/step3_eda_feature_engineering.ipynb → Preprocessing, EDA, features
+notebooks/step2_data_collection.ipynb           → Dataset overview & data dictionary
+notebooks/step3_eda_feature_engineering.ipynb   → Preprocessing, EDA, feature engineering
+notebooks/step4_model_implementation.ipynb      → Model training, tuning, and evaluation
+notebooks/step5_bias_fairness_audit.ipynb       → Explainability, bias audit, and mitigations
 ```
 
 ---
@@ -95,8 +102,8 @@ CICIDS2017: ~500,000 flow records stratified-sampled to 467,589 after deduplicat
 ### Step 4: Model Implementation
 Multiple supervised models (Logistic Regression, Random Forest, XGBoost) with hyperparameter tuning via RandomizedSearchCV, cross-validation, and saved artifacts. SVM deprioritized due to scaling constraints at 400K+ rows.
 
-### Step 5: Bias & Fairness Audit *(in progress)*
-SHAP/LIME/PDP explanations, imbalance and overfitting analysis, fairness evaluation across traffic subgroups.
+### Step 5: Bias & Fairness Audit
+SHAP (TreeExplainer), LIME, and PDP/ICE applied to XGBoost binary classifier. Overfitting analysis: train-test F1 gaps of -0.0010 (LR), 0.0005 (RF), 0.0003 (XGBoost). Fairness audit across traffic volume quartiles and flow duration bins using DIR, FPR/FNR parity, and equalized odds. Per-group threshold calibration applied (Q1=0.32, Q2=0.10, Q3=0.10, Q4=0.72). Optimal decision threshold identified at 0.9820 (Precision 0.9977, Recall 0.9917).
 
 ---
 
