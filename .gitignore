@@ -1,3 +1,7 @@
+# Project meta files — not part of the public repo
+CLAUDE.md
+Capstone Instructions.md
+
 # Credentials — never commit these
 kaggle.json
 *.env
