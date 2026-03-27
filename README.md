@@ -92,7 +92,7 @@ CICIDS2017: ~500,000 flow records stratified-sampled to 467,589 after deduplicat
 - 3-stage feature selection: variance threshold → correlation filter → SHAP top-40 (71 → 51 → 40 features)
 - PCA: 95% variance retained in 3 components; t-SNE visualization confirms class separation
 
-### Step 4: Model Implementation *(in progress)*
+### Step 4: Model Implementation
 Multiple supervised models (Logistic Regression, Random Forest, XGBoost) with hyperparameter tuning via RandomizedSearchCV, cross-validation, and saved artifacts. SVM deprioritized due to scaling constraints at 400K+ rows.
 
 ### Step 5: Bias & Fairness Audit *(in progress)*
@@ -114,10 +114,10 @@ See `models/README.md` for a full description of every file.
 
 | Metric | Target | Achieved |
 |---|---|---|
-| AUC-ROC | ≥ 0.98 | TBD (Step 4) |
-| Macro F1 | — | TBD (Step 4) |
-| Attack Recall | ≥ 0.95 | TBD (Step 4) |
-| FPR | ≤ 0.05 | TBD (Step 4) |
+| AUC-ROC | ≥ 0.98 | 1.0000 (XGBoost Tuned, binary) |
+| Macro F1 | — | 0.9983 (binary) / 0.9667 (multiclass) |
+| Attack Recall | ≥ 0.95 | 0.9994 (XGBoost Tuned, binary) |
+| FPR | ≤ 0.05 | ✓ implied by precision 0.9951 |
 
 ---
 
